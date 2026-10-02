@@ -1,9 +1,29 @@
 from dataclasses import dataclass
 
+
+@dataclass
+class TextSpan:
+    text: str
+    font: str
+    size: float
+
+
+@dataclass
+class TextLine:
+    bbox: tuple[float, float, float, float]
+    spans: list[TextSpan]
+
+
+@dataclass
+class TextBox:
+    bbox: tuple[float, float, float, float]
+    lines: list[TextLine]
+
+
 @dataclass
 class Page:
-    text: str
     number: int
+    blocks: list[TextBox]
 
 
 @dataclass
