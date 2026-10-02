@@ -510,8 +510,8 @@ Paper A
 Clone the repository:
 
 ```bash
-git clone <repository-url>
-cd scientific-evidence-graph
+git clone https://github.com/glemiu6/SEG.git
+cd SEG
 ```
 
 Install dependencies:
