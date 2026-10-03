@@ -1,719 +1,269 @@
-# SEG — Scientific Evidence Graph
+<div align="center">
 
-SEG is a research-oriented system for discovering and visualizing relationships between scientific papers at the claim level.
+# SEG: Scientific Evidence Graph
 
-Rather than only finding papers that are semantically similar, SEG aims to identify how scientific work is related — for example, whether one paper supports, contradicts, extends, or otherwise relates to claims made in another.
-Instead of only finding papers that are semantically similar, the system aims to understand **how scientific work is related**.
+**Find not just which papers are similar, but which papers support, contradict, or qualify a specific scientific claim.**
 
-A paper may:
+![status](https://img.shields.io/badge/status-research%20prototype-orange)
+![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+![uv](https://img.shields.io/badge/managed%20with-uv-purple)
 
-- support a claim made by another paper;
-- contradict a result;
-- extend an existing method;
-- use a similar methodology;
-- reuse the same dataset;
-- investigate the same research problem from a different perspective.
+[Overview](#overview) · [How it works](#how-it-works) · [Quickstart](#quickstart) · [Data model](#data-model) · [Research questions](#research-questions) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
-These relationships are represented as a graph that researchers can explore.
+</div>
 
 ---
 
-## Why This Project Exists
+## Overview
 
-Finding relevant scientific literature can be difficult.
+Academic search tools work at the **paper level**: keywords, titles, abstracts, citations, embeddings. But researchers ask **claim-level** questions:
 
-Most academic search tools rely primarily on:
+- Which papers support *this specific result*?
+- Does any paper contradict it, and under what conditions?
+- Has this method been tried on a different dataset?
 
-- keywords;
-- titles;
-- abstracts;
-- citations;
-- semantic similarity.
+SEG breaks papers into claims, retrieves candidate evidence passages from other papers, and classifies how each passage relates to the claim. The output is a graph in which **every edge points to an exact quoted span** in a source paper.
 
-These approaches are useful, but they usually operate at the **paper level**.
+> [!NOTE]
+> SEG is an early-stage research project. The pipeline below is the design target; see [Status](#status) for what is implemented today.
 
-Researchers often need more specific information:
-
-> Which papers support this particular claim?
-
-> Are there papers that contradict this result?
-
-> Has another paper used this methodology in a different context?
-
-> Which papers provide evidence related to this statement?
-
-Two papers may be strongly related even when their titles and abstracts use very different terminology.
-
-Scientific Evidence Graph approaches literature discovery at a more fine-grained level by breaking papers into smaller scientific units.
+### Example
 
 ```text
-Paper
-├── Sections
-├── Paragraphs
-├── Claims
-├── Methods
-├── Datasets
-└── Results
+Claim (Paper A, §Results):
+  "Embedding-based routing improves agent selection accuracy over keyword
+   routing on a 5-agent benchmark."
+
+  ├── SUPPORTS     Paper B, p.7 ¶2   "...embedding routing reached 91% vs 78%..."
+  ├── CONTRADICTS  Paper C, p.5 ¶4   "...no gain over keyword routing with 20+ agents..."
+  └── QUALIFIES    Paper D, p.9 ¶1   "...gains hold only with in-domain fine-tuning..."
 ```
 
-These units can then be compared across papers.
+Note how Paper C is not simply "contradicting": its conditions (20+ agents) differ. SEG compares conditions before assigning stance, because many apparent contradictions disappear once datasets and settings are aligned.
 
----
+## How it works
 
-## Main Idea
-
-The system transforms scientific literature into a structured graph of scientific evidence.
-
-The general pipeline is:
-
-```text
-Scientific Paper
-       │
-       ▼
-Document Parsing
-       │
-       ▼
-Sections & Paragraphs
-       │
-       ▼
-Claim Extraction
-       │
-       ▼
-Scientific Literature Search
-       │
-       ▼
-Relevant Evidence Retrieval
-       │
-       ▼
-Relationship Classification
-       │
-       ▼
-Scientific Evidence Graph
+```mermaid
+flowchart LR
+    A[Paper<br/>LaTeX / HTML / PDF] --> B[Parse<br/>sections, paragraphs,<br/>citations]
+    B --> C[Extract claims<br/>self-contained,<br/>structured slots]
+    C --> D[Retrieve evidence<br/>from corpus]
+    D --> E[Compare conditions<br/>subject, dataset,<br/>setting]
+    E --> F[Classify stance<br/>supports / contradicts /<br/>qualifies / neutral]
+    F --> G[(Evidence graph<br/>JSON)]
 ```
 
-Instead of only answering:
-
-> Which papers are similar?
-
-the goal is to also answer:
-
-> Why are these papers related?
-
----
-
-## Example
-
-Suppose a scientific paper contains the claim:
-
-> Semantic similarity can be used to dynamically route requests between heterogeneous agents.
-
-The system could:
-
-1. extract the claim;
-2. search for related scientific literature;
-3. retrieve relevant passages;
-4. compare the retrieved evidence with the original claim;
-5. classify the relationship.
-
-For example:
-
-```text
-                         Paper B
-                            │
-                         SUPPORTS
-                            │
-                            ▼
-Paper C ── CONTRADICTS ── Claim A ── EXTENDS ── Paper D
-                            │
-                          RELATED
-                            │
-                            ▼
-                         Paper E
-```
-
-Possible relationships include:
-
-```text
-SUPPORTS
-CONTRADICTS
-EXTENDS
-RELATED
-UNRELATED
-```
-
----
-
-## How It Differs From Traditional RAG
-
-Retrieval-Augmented Generation may be used as one component of the system, but retrieval itself is not the final goal.
-
-A typical RAG pipeline looks like:
-
-```text
-Question
-   │
-   ▼
-Retrieve Documents
-   │
-   ▼
-LLM
-   │
-   ▼
-Answer
-```
-
-Scientific Evidence Graph focuses on constructing structured knowledge:
-
-```text
-Paper
-   │
-   ▼
-Understand Document
-   │
-   ▼
-Extract Claims
-   │
-   ▼
-Find Related Evidence
-   │
-   ▼
-Compare Scientific Statements
-   │
-   ▼
-Classify Relationships
-   │
-   ▼
-Build Evidence Graph
-```
-
-RAG can therefore be used for evidence retrieval, while the larger system focuses on discovering and representing relationships between scientific claims.
-
----
-
-## Core Concepts
-
-### Paper
-
-The original scientific document.
-
-A paper can contain:
-
-```text
-Paper
-├── Metadata
-├── Pages
-├── Sections
-├── Paragraphs
-└── Claims
-```
-
----
-
-### Section
-
-The logical structure of the paper is preserved whenever possible.
-
-Examples include:
-
-```text
-Abstract
-Introduction
-Related Work
-Methodology
-Experiments
-Results
-Discussion
-Conclusion
-```
-
-Preserving document structure helps maintain the context in which scientific statements appear.
-
----
-
-### Paragraph
-
-Paragraphs act as meaningful textual units.
-
-Instead of immediately splitting papers into arbitrary token chunks:
-
-```text
-Introduction
-├── Paragraph 1
-├── Paragraph 2
-└── Paragraph 3
-```
-
-This allows later stages to retain information about the source section and surrounding context.
-
----
-
-### Claim
-
-A claim is a scientific statement extracted from a paper.
-
-Example:
-
-```text
-"The proposed method improves routing accuracy."
-```
-
-Structured representation:
-
-```json
-{
-  "text": "The proposed method improves routing accuracy.",
-  "type": "result",
-  "section": "Results"
-}
-```
-
-Claims can then be compared with claims extracted from other papers.
-
----
-
-### Relationship
-
-Relationships describe how claims or papers are connected.
-
-Initial relationship types include:
-
-```text
-SUPPORTS
-CONTRADICTS
-EXTENDS
-RELATED
-UNRELATED
-```
-
-These relationships become edges in the evidence graph.
-
----
-
-## Architecture
-
-```text
-scientific-evidence-graph/
-│
-├── README.md
-├── ROADMAP.md
-├── pyproject.toml
-├── uv.lock
-├── .gitignore
-│
-├── src/
-│   └── evidence_graph/
-│       ├── __init__.py
-│       ├── main.py
-│       ├── config.py
-│       │
-│       ├── models/
-│       │   ├── __init__.py
-│       │   └── document.py
-│       │
-│       ├── ingestion/
-│       │   ├── __init__.py
-│       │   ├── pdf_reader.py
-│       │   ├── section_parser.py
-│       │   └── paragraph_parser.py
-│       │
-│       ├── extraction/
-│       │   ├── __init__.py
-│       │   └── claims.py
-│       │
-│       ├── llm/
-│       │   ├── __init__.py
-│       │   ├── client.py
-│       │   ├── prompts.py
-│       │   └── schemas.py
-│       │
-│       ├── retrieval/
-│       │   ├── __init__.py
-│       │   ├── paper_search.py
-│       │   └── embeddings.py
-│       │
-│       ├── relations/
-│       │   ├── __init__.py
-│       │   └── classifier.py
-│       │
-│       ├── graph/
-│       │   ├── __init__.py
-│       │   ├── models.py
-│       │   ├── builder.py
-│       │   └── exporter.py
-│       │
-│       ├── storage/
-│       │   ├── __init__.py
-│       │   └── json_store.py
-│       │
-│       └── pipeline/
-│           ├── __init__.py
-│           └── paper_pipeline.py
-│
-├── data/
-│   ├── papers/
-│   ├── parsed/
-│   ├── results/
-│   └── obsidian/
-│
-├── tests/
-│   ├── test_pdf_reader.py
-│   ├── test_section_parser.py
-│   ├── test_paragraph_parser.py
-│   ├── test_claims.py
-│   └── test_relations.py
-│
-└── experiments/
-    ├── datasets/
-    ├── results/
-    └── notebooks/
-```
-
----
-
-## How It Works
-
-### 1. Read a Scientific Paper
-
-The system receives a PDF and extracts its content.
-
-```text
-paper.pdf
-   │
-   ▼
-PDFReader
-```
-
-The parser preserves page information so extracted information can later be traced back to its source.
-
----
-
-### 2. Recover Document Structure
-
-The extracted document is divided into logical sections.
-
-```text
-Pages
-  │
-  ▼
-SectionParser
-  │
-  ├── Abstract
-  ├── Introduction
-  ├── Methodology
-  ├── Results
-  └── Conclusion
-```
-
----
-
-### 3. Extract Paragraphs
-
-Sections are divided into paragraphs.
-
-```text
-Methodology
-│
-├── Paragraph 1
-├── Paragraph 2
-└── Paragraph 3
-```
-
----
-
-### 4. Extract Scientific Claims
-
-Selected paragraphs are analyzed and converted into structured claims.
-
-```text
-Paragraph
-   │
-   ▼
-LLM
-   │
-   ▼
-Structured Claims
-```
-
----
-
-### 5. Find Related Literature
-
-Extracted claims are used to search scientific literature.
-
-Possible sources include:
-
-- OpenAlex;
-- Semantic Scholar;
-- Crossref;
-- arXiv;
-- local scientific paper collections.
-
----
-
-### 6. Retrieve Evidence
-
-Relevant passages are retrieved from candidate papers.
-
-```text
-Claim
-  │
-  ▼
-Semantic Retrieval
-  │
-  ▼
-Candidate Evidence
-```
-
----
-
-### 7. Classify Relationships
-
-Claims are compared and assigned a relationship.
-
-```text
-Claim A + Claim B
-        │
-        ▼
-Relationship Classifier
-        │
-        ▼
-SUPPORTS / CONTRADICTS / EXTENDS / RELATED
-```
-
----
-
-### 8. Build the Evidence Graph
-
-The resulting information becomes a directed graph.
-
-```text
-Paper A
-  │
-  └── HAS_CLAIM
-          │
-          ▼
-       Claim A
-          │
-          ├── SUPPORTS ─────→ Claim B
-          └── CONTRADICTS ──→ Claim C
-```
-
----
-
-## Installation
-
-### Requirements
-
-- Python
-- uv
-
-Clone the repository:
+| Stage | Input | Output |
+|---|---|---|
+| **Parse** | LaTeX, HTML, or PDF | `Paper` with sections, paragraphs, citation mentions, offsets |
+| **Extract** | check-worthy paragraphs | `Claim` with decontextualized text, subject, outcome, dataset, conditions |
+| **Retrieve** | claim | ranked evidence passages from a fixed corpus |
+| **Compare** | claim + passage | `ConditionMatch` (same subject? dataset? setting?) |
+| **Classify** | claim + passage + match | `EvidenceEdge` with stance, confidence, rationale |
+| **Build** | edges | graph (JSON, NetworkX) |
+
+### Design principles
+
+1. **Evidence before generation.** An edge exists only if an exact supporting span exists.
+2. **Provenance everywhere.** Every claim and edge traces to paper, page, section, paragraph, and character offsets.
+3. **Claim ≠ sentence.** Claims are rewritten to be self-contained, otherwise "our method improves accuracy" cannot be compared with anything.
+4. **Claim-level and paper-level relations are different.** Stance (supports/contradicts) is claim-to-passage. Relations like *cites* or *same dataset* come from metadata, not an LLM.
+5. **Modular and benchmarked.** Every stage is replaceable and evaluated independently.
+6. **Reproducible.** Pinned model and prompt versions, cached LLM calls, versioned schemas, JSON artifacts per stage.
+
+## Status
+
+| Component | State |
+|---|---|
+| Data schema | ✅ defined ([`schema.py`](src/evidence_graph/models/schema.py)) |
+| Parsing design | ✅ documented ([`docs/PARSING.md`](docs/PARSING.md)) |
+| PDF / TEI parsing | 🚧 in progress |
+| Claim extraction | 📋 planned |
+| Retrieval + baselines | 📋 planned |
+| Stance classification | 📋 planned |
+| Graph export | 📋 planned |
+| Review UI | 📋 planned |
+
+See [`ROADMAP.md`](ROADMAP.md) for milestones and exit criteria.
+
+## Quickstart
+
+**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), Docker (only for GROBID PDF parsing).
 
 ```bash
 git clone https://github.com/glemiu6/SEG.git
 cd SEG
-```
-
-Install dependencies:
-
-```bash
 uv sync
 ```
 
----
+Start GROBID for PDF parsing (optional if you use arXiv LaTeX/HTML sources):
 
-## Usage
-
-Place a scientific paper inside:
-
-```text
-data/papers/
+```bash
+docker run --rm -p 8070:8070 lfoppiano/grobid:0.8.1
 ```
 
-For example:
+Configure your LLM provider:
 
-```text
-data/papers/example.pdf
+```bash
+cp .env.example .env   # then set your API key and model names
 ```
 
-Run the pipeline:
+Run the pipeline on a paper:
 
 ```bash
 uv run python -m evidence_graph.main data/papers/example.pdf
 ```
 
-Processed document data can be stored in:
+Outputs:
 
 ```text
-data/parsed/
+data/parsed/example.json          # structured Paper
+data/parsed/example.claims.json   # extracted Claims
+data/results/example.graph.json   # evidence graph
 ```
 
-Graph and analysis results can be stored in:
-
-```text
-data/results/
-```
-
----
-
-## Tests
-
-Run the test suite with:
+Run tests:
 
 ```bash
 uv run pytest
 ```
 
----
+## Data model
 
-## Obsidian Integration
-
-The evidence graph can eventually be exported as an Obsidian vault.
-
-Example:
+All stages exchange validated [Pydantic](https://docs.pydantic.dev) models.
 
 ```text
-data/obsidian/
-│
-├── papers/
-│   ├── Paper A.md
-│   └── Paper B.md
-│
-└── claims/
-    ├── Claim A1.md
-    └── Claim B1.md
+Paper ── Section ── Paragraph ── CitationMention
+  │
+  └── Claim ── EvidenceEdge ──▶ Span (exact evidence in another paper)
+                    │
+                    ├── stance: supports | contradicts | qualifies | neutral
+                    ├── confidence, rationale
+                    └── condition_match
+PaperRelation: cites | same_dataset | same_method   (from metadata, not LLM)
 ```
 
-A paper file could contain:
+A claim looks like this:
 
-```markdown
-# Paper A
-
-## Claims
-
-- [[Claim A1]]
-- [[Claim A2]]
-
-## Related Papers
-
-- [[Paper B]]
-- [[Paper C]]
+```json
+{
+  "id": "arxiv:2401.01234:c7",
+  "original_text": "Our router improves accuracy by 6 points.",
+  "canonical_text": "Semantic-similarity routing improves agent selection accuracy by 6 points over keyword routing on RouterBench.",
+  "type": "result",
+  "subject": "semantic-similarity routing",
+  "comparator": "keyword routing",
+  "outcome": "agent selection accuracy",
+  "direction": "increase",
+  "value": "+6 points",
+  "dataset": "RouterBench",
+  "conditions": ["5 agents", "English"],
+  "source": { "paper_id": "arxiv:2401.01234", "section_id": "…:s4", "page_start": 7 }
+}
 ```
 
-Opening the generated directory as an Obsidian vault makes it possible to explore relationships through Obsidian's graph view.
+An edge looks like this:
 
----
+```json
+{
+  "claim_id": "arxiv:2401.01234:c7",
+  "stance": "qualifies",
+  "confidence": 0.78,
+  "rationale": "Gains reported only with in-domain fine-tuning; the original claim states no such condition.",
+  "evidence": { "paper_id": "arxiv:2402.05555", "page_start": 9, "text": "…" },
+  "condition_match": { "same_subject": true, "same_dataset": false }
+}
+```
 
-## Research Direction
+## Research questions
 
-Scientific Evidence Graph is designed not only as an application, but also as a platform for experiments in scientific information retrieval.
+SEG doubles as a testbed for scientific information retrieval:
 
-Potential research questions include:
+- **RQ1.** Does claim-level retrieval find contradicting and qualifying evidence better than abstract-level retrieval?
+- **RQ2.** Does structure-preserving parsing improve claim extraction?
+- **RQ3.** Can LLMs reliably classify stance between scientific claims, once conditions are compared?
 
-> Does claim-level retrieval identify relevant scientific literature better than abstract-level retrieval?
+Planned evaluation: SciFact / SciFact-Open for sanity checks, plus a hand-labeled gold set with inter-annotator agreement. Baselines include BM25, SPECTER2, cross-encoder rerankers, NLI models, and LLMs. Ablations cover retrieval granularity, parsing quality, claim decontextualization, and embedding models.
 
-> Can language models reliably classify support, contradiction, and extension relationships between scientific claims?
+### Results
 
-> Does preserving the structure of scientific documents improve claim extraction?
+*Pending. This table will be filled in as milestone M3 completes.*
 
-> Can evidence graphs improve scientific literature exploration compared with conventional semantic search?
+| Retrieval level | Recall@10 | Contradiction-recall@10 |
+|---|---|---|
+| Abstract (BM25) | – | – |
+| Abstract (SPECTER2) | – | – |
+| Paragraph (dense) | – | – |
+| Claim (dense) | – | – |
 
-> Which embedding models perform best for claim-level scientific retrieval?
-
-The modular architecture allows individual components to be replaced and benchmarked independently.
-
-For example:
+## Repository layout
 
 ```text
-Abstract Retrieval
-        vs
-Paragraph Retrieval
-        vs
-Claim Retrieval
+src/evidence_graph/
+├── models/       # Pydantic schema
+├── ingestion/    # PDF/TEI/LaTeX → sections, paragraphs
+├── extraction/   # claim extraction
+├── llm/          # client, prompts, cache
+├── retrieval/    # corpus index, embeddings, reranking
+├── relations/    # stance classification
+├── graph/        # builder, exporters
+├── storage/      # JSON artifact store
+└── pipeline/     # stage orchestration
+data/             # papers, parsed, results (git-ignored)
+experiments/      # benchmarks, notebooks, results
+docs/             # design docs
+tests/
 ```
 
-or:
+## Roadmap
 
-```text
-Embedding Model A
-        vs
-Embedding Model B
+1. Schema, LLM client with caching *(M0)*
+2. Parsing: arXiv LaTeX/HTML, GROBID *(M1)*
+3. Corpus and claim extraction *(M2)*
+4. Gold set and baselines *(M3)*
+5. End-to-end vertical slice *(M4)*
+6. Ablations and error analysis *(M5)*
+7. Review UI and graph visualization *(M6)*
+8. Write-up and release *(M7)*
+
+Deferred until the core is validated: `EXTENDS` relations, Obsidian export, FastAPI/React frontend, FAISS at scale.
+
+Details in [`ROADMAP.md`](ROADMAP.md).
+
+## Related work
+
+SEG builds on, and aims to differ from:
+
+- [SciFact](https://github.com/allenai/scifact): claim verification against abstracts
+- [scite](https://scite.ai): supporting/contrasting citation statements
+- Citation intent classification (SciCite, ACL-ARC)
+- [S2ORC](https://github.com/allenai/s2orc) / [unarXive](https://github.com/IllDepence/unarXive): structured full-text corpora
+- [ORKG](https://orkg.org): structured scholarly knowledge
+
+The difference: claim-to-passage evidence retrieved beyond direct citations, with condition-aware stance and exact-span provenance.
+
+## Contributing
+
+Contributions are welcome, especially:
+
+- annotated claim/evidence pairs
+- parser comparisons on papers from your field
+- new baselines for retrieval or stance classification
+
+Open an issue before large changes. Run `uv run pytest` and keep schema changes versioned.
+
+## Citation
+
+```bibtex
+@software{seg2026,
+  title  = {SEG: Scientific Evidence Graph},
+  author = {Your Name},
+  year   = {2026},
+  url    = {https://github.com/glemiu6/SEG}
+}
 ```
-
-or:
-
-```text
-Relationship Classifier A
-        vs
-Relationship Classifier B
-```
-
-Experimental development is described in more detail in [`ROADMAP.md`](ROADMAP.md).
-
----
-
-## Technology
-
-The project is primarily built in Python.
-
-Core and planned technologies include:
-
-```text
-Python
-├── PyMuPDF
-├── Pydantic
-├── httpx
-├── sentence-transformers
-├── FAISS
-└── NetworkX
-```
-
-A future web interface may use:
-
-```text
-FastAPI
-+
-React
-```
-
-Technologies are introduced only when they solve a specific requirement of the system.
-
----
-
-## Design Principles
-
-### Modular Pipeline
-
-Each stage should be independently replaceable.
-
-```text
-Parsing
- ↓
-Extraction
- ↓
-Retrieval
- ↓
-Classification
- ↓
-Graph
-```
-
-This makes experimentation and benchmarking easier.
-
-### Preserve Sources
-
-Generated claims and relationships should remain traceable to their original paper, page, section, and paragraph whenever possible.
-
-### Structured Outputs
-
-Components should exchange structured data rather than free-form responses whenever possible.
-
-### Evidence Before Generation
-
-The system should preserve and expose the evidence used to create relationships rather than generating unsupported connections.
-
----
 
 ## License
 
-License to be determined.
+MIT. See [`LICENSE`](LICENSE).

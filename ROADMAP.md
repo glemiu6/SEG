@@ -1,645 +1,112 @@
-# Scientific Evidence Graph — Roadmap
+# ROADMAP
 
-This document describes the planned development of Scientific Evidence Graph.
+**Research question (primary):** Does claim-level retrieval find contradicting and qualifying evidence better than abstract- or paper-level retrieval?
 
-The project is divided into phases so that each component can be implemented, tested, and evaluated independently.
+**Secondary questions**
+- RQ2: Does structure-preserving parsing improve claim extraction quality?
+- RQ3: Can LLMs classify claim-to-evidence stance reliably, after conditions are compared?
 
-The general direction is:
+**Principles:** vertical slice first, evaluate before scaling, every stage writes versioned JSON artifacts, nothing without provenance.
 
-```text
-Scientific PDF
-      │
-      ▼
-Document Structure
-      │
-      ▼
-Scientific Claims
-      │
-      ▼
-Literature Discovery
-      │
-      ▼
-Evidence Retrieval
-      │
-      ▼
-Relationship Classification
-      │
-      ▼
-Evidence Graph
-      │
-      ├── Obsidian
-      └── Web Interface
-```
+Time estimates assume ~10 hrs/week. Adjust, but keep the order.
 
 ---
 
-# Phase 1 — Scientific Document Parsing
+## M0: Foundations (week 1)
+- Pydantic schema (`schema.py`), `SCHEMA_VERSION`, JSON store
+- Config, logging, LLM client with disk cache and pinned model/prompt versions
+- Tests for schema round-trips
 
-Build the foundation for processing scientific PDFs.
+**Exit:** a `Paper` and `Claim` serialize, load, and validate.
 
-## Goals
+## M1: Parsing (weeks 2–3)
+- Implement the pipeline in `PARSING.md`: arXiv LaTeX/HTML first, GROBID second
+- Section normalizer, paragraph and citation-mention extraction, validators
+- Compare GROBID vs Docling vs PyMuPDF on 30 hand-checked papers
 
-- [ ] Read scientific PDFs
-- [ ] Extract page text
-- [ ] Preserve page numbers
-- [ ] Extract PDF metadata
-- [ ] Detect section headings
-- [ ] Identify section boundaries
-- [ ] Split sections into paragraphs
-- [ ] Clean extracted text
-- [ ] Create structured document models
-- [ ] Serialize processed papers to JSON
+**Exit:** ≥ 95% of corpus papers parse; section-type accuracy ≥ 90%; span validation 100%.
 
-## Pipeline
+## M2: Corpus + claim extraction (weeks 3–5)
+- Pick **one narrow topic** (for example, LLM routing, or retrieval evaluation). Build a fixed corpus of 1,000 open-access papers, later 5–50k.
+- Check-worthiness filter
+- Claim extractor with decontextualization and structured slots
+- Manual review of 100 extracted claims: precision, self-containedness, slot accuracy
 
-```text
-PDF
- ↓
-Pages
- ↓
-Sections
- ↓
-Paragraphs
- ↓
-Structured Paper
-```
+**Exit:** ≥ 85% of reviewed claims judged self-contained and faithful. Record failure types.
 
-## Core Components
+## M3: Gold set + baselines (weeks 5–8) ⟵ most important
+- **Benchmarks (sanity):** SciFact, SciFact-Open, SciCite; optionally SciRIFF and Citation-intent sets
+- **Own gold set:** ~200–300 claim/passage pairs sampled from your corpus, labeled `supports / contradicts / qualifies / neutral / not-relevant` by two annotators. Report Cohen's κ and adjudicate disagreements. Oversample contradictions (they are rare; mine them with citation contexts containing "however", "in contrast", "fails to replicate").
+- **Retrieval baselines:** BM25, SPECTER2 (abstract level), dense paragraph retrieval, dense claim-to-claim retrieval, hybrid + cross-encoder reranker
+- **Stance baselines:** off-the-shelf NLI model, fine-tuned SciFact model, zero-shot LLM, LLM with condition-match step
 
-```text
-PDFReader
-SectionParser
-ParagraphParser
-JSONStore
-IngestionPipeline
-```
+**Metrics**
+| Task | Metrics |
+|---|---|
+| Retrieval | Recall@k, MRR, nDCG@10; **contradiction-recall@k** reported separately |
+| Stance | macro-F1, per-class F1 (contradicts and qualifies especially), confusion matrix |
+| Claim extraction | precision, self-containedness rate, slot accuracy |
+| Parsing | section accuracy, citation resolution rate |
 
-## Core Models
+**Exit:** a results table with all baselines and confidence intervals (bootstrap). If claim-level retrieval does not beat abstract-level, that is still a publishable finding.
 
-```text
-Paper
-Page
-Section
-Paragraph
-```
+## M4: Vertical slice end-to-end (weeks 8–10)
+`1 paper → ~10 claims → retrieve from the 1,000-paper corpus → rerank → condition match → stance → graph JSON`
 
----
+- Edge schema with evidence span, rationale, confidence
+- Paper-level relations from metadata: `CITES`, `SAME_DATASET` (dataset name normalization), `SAME_METHOD`
+- NetworkX graph builder and JSON export
+- Cost and latency log per paper
 
-# Phase 2 — Scientific Claim Extraction
+**Exit:** one paper produces a graph where every edge opens to an exact evidence quote.
 
-Extract structured scientific statements from the parsed paper.
+## M5: Improve + ablate (weeks 10–14)
+Ablations (each one a table row):
+1. Abstract vs paragraph vs claim retrieval
+2. Structure-preserving vs flat parsing
+3. Raw claim vs decontextualized claim
+4. With vs without condition-match step
+5. Embedding models A/B (SPECTER2, general-purpose embedder, domain-tuned)
+6. Citation contexts as weak supervision: fine-tune retriever or stance model on them
 
-## Goals
+Error analysis: sample 50 failures per stage and categorize.
 
-- [ ] Implement a generic LLM client
-- [ ] Define structured output schemas
-- [ ] Extract claims from paragraphs
-- [ ] Classify claim types
-- [ ] Preserve source paragraphs
-- [ ] Preserve source sections
-- [ ] Preserve source page numbers
-- [ ] Add structured-output validation
-- [ ] Handle invalid LLM responses
-- [ ] Store extracted claims
+**Exit:** each ablation reported, with conclusions you'd defend to a reviewer.
 
-## Pipeline
+## M6: Human review + minimal UI (weeks 14–16)
+- Simple review tool (Streamlit or a local HTML page): show claim, evidence, stance, accept/correct
+- Corrections write `human_label` and feed the gold set
+- Graph visualization (pyvis/Cytoscape.js export), screenshot for README
 
-```text
-Paragraph
-   │
-   ▼
-LLM
-   │
-   ▼
-Structured Claim
-```
+**Exit:** can review 50 edges in 15 minutes; corrections reload into evaluation.
 
-## Initial Claim Types
-
-Possible initial categories:
-
-```text
-METHOD
-RESULT
-HYPOTHESIS
-CONCLUSION
-OBSERVATION
-BACKGROUND
-```
-
-The exact taxonomy can be refined later based on experimental results.
+## M7: Write-up and release (weeks 16–20)
+- Paper draft: motivation, related work (SciFact, scite, citation intent, ORKG), method, benchmark, results, limitations
+- Release: code, corpus IDs, gold annotations (check licenses), prompts, cached outputs
+- README with demo, results table, and reproduction commands
 
 ---
 
-# Phase 3 — Scientific Literature Discovery
-
-Use extracted claims to discover potentially relevant scientific papers.
-
-## Goals
-
-- [ ] Generate search queries from claims
-- [ ] Integrate OpenAlex
-- [ ] Integrate Semantic Scholar
-- [ ] Integrate arXiv
-- [ ] Integrate Crossref where useful
-- [ ] Normalize paper metadata
-- [ ] Deduplicate search results
-- [ ] Rank candidate papers
-- [ ] Cache external API results
-- [ ] Store discovered paper metadata
-
-## Pipeline
-
-```text
-Claim
- ↓
-Search Query
- ↓
-Scientific Search APIs
- ↓
-Candidate Papers
-```
-
-## Candidate Metadata
-
-Each discovered paper should ideally contain:
-
-```text
-ID
-Title
-Authors
-Abstract
-Publication Date
-DOI
-External URLs
-Source
-```
-
----
-
-# Phase 4 — Semantic Evidence Retrieval
-
-Find the most relevant evidence inside candidate papers.
-
-## Goals
-
-- [ ] Generate paragraph embeddings
-- [ ] Generate claim embeddings
-- [ ] Build local vector indexes
-- [ ] Search candidate passages
-- [ ] Rank passages by similarity
-- [ ] Implement reranking
-- [ ] Compare different retrieval strategies
-- [ ] Preserve passage source information
-- [ ] Return evidence with page and section references
-
-## Pipeline
-
-```text
-Original Claim
-      │
-      ▼
-Embedding
-      │
-      ▼
-Candidate Passages
-      │
-      ▼
-Reranker
-      │
-      ▼
-Relevant Evidence
-```
-
-## Retrieval Strategies to Compare
-
-```text
-Abstract-level retrieval
-Paragraph-level retrieval
-Claim-level retrieval
-```
-
-Possible metrics:
-
-```text
-Precision@K
-Recall@K
-MRR
-nDCG
-```
-
----
-
-# Phase 5 — Scientific Relationship Classification
-
-Determine how two pieces of scientific evidence are related.
-
-## Goals
-
-- [ ] Compare pairs of claims
-- [ ] Define relationship schema
-- [ ] Classify relationships
-- [ ] Produce confidence scores
-- [ ] Generate explanations
-- [ ] Preserve supporting passages
-- [ ] Reject insufficient evidence
-- [ ] Benchmark multiple models
-
-## Initial Relationships
-
-```text
-SUPPORTS
-CONTRADICTS
-EXTENDS
-RELATED
-UNRELATED
-```
-
-## Pipeline
-
-```text
-Claim A
-   +
-Claim B
-   │
-   ▼
-Relationship Classifier
-   │
-   ▼
-Relationship
-```
-
-Each relationship should ideally include:
-
-```text
-source claim
-target claim
-relationship type
-confidence
-evidence
-explanation
-```
-
----
-
-# Phase 6 — Scientific Evidence Graph
-
-Convert papers, claims, and relationships into a graph representation.
-
-## Goals
-
-- [ ] Create paper nodes
-- [ ] Create claim nodes
-- [ ] Create directed relationships
-- [ ] Store edge metadata
-- [ ] Add source evidence to relationships
-- [ ] Serialize graphs
-- [ ] Traverse related claims
-- [ ] Traverse related papers
-- [ ] Find evidence paths
-- [ ] Support graph expansion
-
-## Initial Graph
-
-```text
-Paper A
-  │
-  └── HAS_CLAIM
-          │
-          ▼
-       Claim A
-          │
-          ├── SUPPORTS ─────→ Claim B
-          ├── CONTRADICTS ──→ Claim C
-          └── EXTENDS ──────→ Claim D
-```
-
-## Possible Future Node Types
-
-```text
-Paper
-Claim
-Method
-Dataset
-Experiment
-Result
-Author
-```
-
-## Possible Future Edge Types
-
-```text
-HAS_CLAIM
-SUPPORTS
-CONTRADICTS
-EXTENDS
-RELATED
-USES_METHOD
-USES_DATASET
-CITES
-REPLICATES
-```
-
----
-
-# Phase 7 — Obsidian Integration
-
-Allow users to explore the evidence graph through Obsidian.
-
-## Goals
-
-- [ ] Generate paper Markdown files
-- [ ] Generate claim Markdown files
-- [ ] Generate internal links
-- [ ] Add relationship metadata
-- [ ] Add source links
-- [ ] Generate an Obsidian-ready vault
-- [ ] Support Obsidian graph view
-
-## Example
-
-```text
-vault/
-│
-├── papers/
-│   ├── Paper A.md
-│   └── Paper B.md
-│
-└── claims/
-    ├── Claim A1.md
-    ├── Claim A2.md
-    └── Claim B1.md
-```
-
-Example note:
-
-```markdown
-# Paper A
-
-## Claims
-
-- [[Claim A1]]
-- [[Claim A2]]
-
-## Related Papers
-
-- [[Paper B]]
-- [[Paper C]]
-```
-
----
-
-# Phase 8 — Web Interface
-
-Build an interface for interacting with the evidence graph.
-
-Possible stack:
-
-```text
-React
-  │
-  ▼
-FastAPI
-  │
-  ▼
-Scientific Evidence Graph
-```
-
-## Goals
-
-- [ ] Upload papers
-- [ ] View parsed document structure
-- [ ] Inspect extracted claims
-- [ ] Inspect discovered papers
-- [ ] Inspect relationship evidence
-- [ ] Search claims
-- [ ] Search papers
-- [ ] Visualize the graph
-- [ ] Expand graph nodes interactively
-- [ ] Filter relationships
-- [ ] Navigate back to source passages
-
----
-
-# Phase 9 — Research Evaluation
-
-Turn the system into an experimental research platform.
-
-## Retrieval Experiments
-
-Compare:
-
-```text
-Abstract Retrieval
-vs
-Paragraph Retrieval
-vs
-Claim Retrieval
-```
-
-Metrics:
-
-```text
-Precision@K
-Recall@K
-MRR
-nDCG
-```
-
----
-
-## Embedding Experiments
-
-Compare multiple scientific and general-purpose embedding models.
-
-Evaluate:
-
-```text
-retrieval quality
-latency
-memory usage
-index size
-```
-
----
-
-## Relationship Classification Experiments
-
-Compare models on:
-
-```text
-SUPPORTS
-CONTRADICTS
-EXTENDS
-RELATED
-UNRELATED
-```
-
-Metrics:
-
-```text
-Accuracy
-Precision
-Recall
-F1
-Confusion Matrix
-```
-
----
-
-## LLM Benchmarking
-
-Possible dimensions:
-
-```text
-extraction quality
-classification quality
-latency
-token usage
-memory usage
-cost
-```
-
----
-
-## Document Structure Experiments
-
-Compare:
-
-```text
-fixed token chunks
-vs
-paragraph-based chunks
-vs
-section-aware paragraphs
-```
-
-Possible research question:
-
-> Does preserving scientific document structure improve claim extraction and evidence retrieval?
-
----
-
-# Phase 10 — Advanced Evidence Analysis
-
-Potential future research directions.
-
-## Claim Clustering
-
-Group similar claims across papers.
-
-```text
-Claim A ─┐
-Claim B ─┼── Claim Cluster
-Claim C ─┘
-```
-
----
-
-## Evidence Consensus
-
-Estimate how scientific evidence is distributed around a claim.
-
-For example:
-
-```text
-Central Claim
-├── 8 supporting papers
-├── 2 contradicting papers
-└── 4 related papers
-```
-
-The system should expose the underlying evidence rather than reducing this automatically to a simple truth score.
-
----
-
-## Temporal Analysis
-
-Study how evidence changes over time.
-
-```text
-2018 → Initial Claim
-
-2020 → Supporting Evidence
-
-2022 → Contradictory Study
-
-2025 → Replication
-
-2027 → Updated Method
-```
-
----
-
-## Graph-Based Search
-
-Allow queries such as:
-
-```text
-Find papers that contradict claims
-supported by Paper A.
-```
-
-or:
-
-```text
-Find methods that extend Method X.
-```
-
----
-
-# Research Questions
-
-Possible questions that could later form the basis of a paper include:
-
-### RQ1
-
-Does claim-level retrieval identify relevant scientific literature more effectively than abstract-level retrieval?
-
-### RQ2
-
-Does preserving document structure improve scientific claim extraction?
-
-### RQ3
-
-Can language models reliably classify relationships between scientific claims?
-
-### RQ4
-
-Which embedding models work best for claim-level scientific retrieval?
-
-### RQ5
-
-Does reranking significantly improve claim-to-evidence retrieval?
-
-### RQ6
-
-Can a claim-centered evidence graph improve scientific literature exploration compared with conventional semantic search?
-
----
-
-# Long-Term Direction
-
-The long-term objective is to move from:
-
-```text
-Paper
- ↓
-Find Similar Papers
-```
-
-toward:
-
-```text
-Paper
- ↓
-Understand Claims
- ↓
-Discover Evidence
- ↓
-Understand Relationships
- ↓
-Build Scientific Knowledge Network
-```
-
-The graph should remain grounded in the original literature so that relationships can always be traced back to the evidence that produced them.
+## Deferred (add only if the above works)
+- `EXTENDS` relation (needs citation + method evidence)
+- Obsidian export
+- FastAPI + React
+- FAISS (switch from brute force when corpus > ~100k passages)
+- Live API search (OpenAlex, Semantic Scholar) as an online mode
+- Table and figure-based claims
+
+## Risks
+| Risk | Mitigation |
+|---|---|
+| Claims too vague to compare | Decontextualization + slot extraction; measure self-containedness |
+| Few true contradictions in corpus | Mine via citation contexts; include SciFact-Open and replication papers |
+| LLM cost | Check-worthiness filter, cache, small model for filtering, large for stance |
+| Annotation agreement low | Refine taxonomy early; pilot on 30 pairs |
+| Parser failures | Source priority, validators, failure log |
+| Scope creep | Each milestone has exit criteria; defer list above |
+
+## Definition of done for v0.1
+- Reproducible command that builds a graph for the sample corpus
+- Results table with ≥ 4 retrieval and ≥ 3 stance baselines
+- Gold set with reported κ
+- Every edge traceable to page, paragraph, and exact span
