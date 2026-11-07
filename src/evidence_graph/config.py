@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 @dataclass
 class ModelConfig:
-    name: str = "qwen3:8b"
+    name: str = "llama3.1:8b"
     provider: str = "ollama"
     base_url: str = "http://localhost:11434"
     temperature: float = 0.0

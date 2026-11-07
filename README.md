@@ -9,7 +9,7 @@
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![uv](https://img.shields.io/badge/managed%20with-uv-purple)
 
-[Overview](#overview) · [How it works](#how-it-works) · [Quickstart](#quickstart) · [Data model](#data-model) · [Research questions](#research-questions) · [Roadmap](#roadmap) · [Contributing](#contributing)
+[Overview](#overview) · [How it works](#how-it-works) · [Quickstart](#quickstart) · [CLI reference](#cli-reference) · [Data model](#data-model) · [Research questions](#research-questions) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
 </div>
 
@@ -109,19 +109,165 @@ Configure your LLM provider:
 cp .env.example .env   # then set your API key and model names
 ```
 
-Run the pipeline on a paper:
+Recommend related papers from a local PDF (internet access is required for the
+OpenAlex search):
 
 ```bash
-uv run python -m evidence_graph.main data/papers/example.pdf
+uv run seg data/papers/example.pdf
 ```
 
-Outputs:
+Useful filters can be combined:
+
+```bash
+uv run seg paper.pdf --venue NeurIPS --from-year 2022 --open-access --limit 10
+uv run seg paper.pdf --from-year 2020 --json
+```
+
+The CLI extracts text locally, builds search terms from the title and opening
+pages, and queries OpenAlex. Each recommendation includes authors, year, venue,
+research areas, a short abstract-based summary, and a DOI or landing-page link.
+Image-only scanned PDFs are reported clearly; OCR is planned for a later phase.
+
+### CLI reference
+
+Run `uv run seg --help` to see the installed version's options. All current
+arguments can be combined unless noted below.
+
+| Argument | Default | Purpose |
+|---|---:|---|
+| `paper` | required | Path to a text-based PDF. This is the only positional argument. |
+| `-h`, `--help` | — | Show command usage and exit. |
+| `--venue NAME` | any | Keep conference or journal names containing `NAME`, case-insensitively. |
+| `--from-year YEAR` | any | Set the earliest publication year. |
+| `--to-year YEAR` | any | Set the latest publication year; it cannot precede `--from-year`. |
+| `--open-access` | off | Return only papers marked open access by OpenAlex. |
+| `--limit N` | `5` | Return `N` final results; valid range: 1–50. |
+| `--json` | off | Emit machine-readable JSON instead of formatted terminal output. |
+| `--llm` | off | Generate summaries, research areas, and relevance explanations with Ollama. |
+| `--model NAME` | `qwen3:8b` | Select the Ollama generation model; used only with `--llm`. |
+| `--ollama-url URL` | `http://localhost:11434` | Use another Ollama server for generation and embeddings. |
+| `--rerank` | off | Semantically rerank an expanded OpenAlex result set using local embeddings. |
+| `--embedding-model NAME` | `bge-m3` | Select the Ollama embedding model; used only with `--rerank`. |
+| `--candidate-pool N` | `30` | Number of OpenAlex candidates considered by `--rerank`; must be between `--limit` and 100. |
+| `--cache-path PATH` | `data/cache/seg.sqlite3` | Store persistent OpenAlex, embedding, and LLM cache entries at `PATH`. |
+| `--no-cache` | off | Disable all persistent cache reads and writes for this run. |
+
+Common combinations:
+
+```bash
+# Filtered OpenAlex search with readable terminal output
+uv run seg paper.pdf --venue NeurIPS --from-year 2022 --to-year 2025 --open-access
+
+# Local semantic ranking, followed by local LLM explanations
+uv run seg paper.pdf --rerank --candidate-pool 50 --limit 10 \
+  --embedding-model bge-m3 --llm --model llama3.1:8b
+
+# Automation-friendly output without using persistent cache entries
+uv run seg paper.pdf --rerank --llm --json --no-cache
+
+# Remote Ollama-compatible server and custom cache location
+uv run seg paper.pdf --rerank --llm --ollama-url http://192.168.1.20:11434 \
+  --cache-path /tmp/seg.sqlite3
+```
+
+### Local LLM enrichment
+
+SEG can optionally use a local [Ollama](https://ollama.com/) model to replace the
+extractive abstract preview with a concise summary, refined research areas, and
+an explanation of why each candidate is relevant to the uploaded paper. Install
+Ollama, start it, and download the default model:
+
+```bash
+ollama serve
+ollama pull qwen3:8b
+uv run seg paper.pdf --llm
+```
+
+Choose another installed model or server when needed:
+
+```bash
+uv run seg paper.pdf --llm --model llama3.1:8b
+uv run seg paper.pdf --llm --ollama-url http://localhost:11434 --json
+```
+
+The LLM feature is optional. Without `--llm`, SEG requires no local model and
+continues to use the first two abstract sentences as the summary. Candidates
+without an OpenAlex abstract are not sent to the model.
+
+### Semantic reranking
+
+OpenAlex search relevance is useful for finding candidates, but matching words
+does not always mean that two papers address the same problem. SEG can rerank a
+larger candidate pool using a local Ollama embedding model:
+
+```bash
+ollama pull bge-m3
+uv run seg paper.pdf --rerank --limit 5
+```
+
+By default, SEG fetches 30 candidates, embeds the uploaded paper and all
+candidate abstracts in one local batch, computes cosine similarity, and returns
+the five closest candidates. Control the pool and model explicitly when needed:
+
+```bash
+uv run seg paper.pdf --rerank --candidate-pool 50 --limit 10
+uv run seg paper.pdf --rerank --embedding-model mxbai-embed-large
+```
+
+Reranking and LLM analysis can be combined. Reranking happens first, so the
+generative model processes only the final results:
+
+```bash
+uv run seg paper.pdf --rerank --llm --limit 5 --model llama3.1:8b
+```
+
+The embedding model receives at most 12,000 characters of source opening text
+and 12,000 characters from each available candidate abstract. Candidates without
+abstracts are placed after candidates that can be scored. The CLI displays the
+cosine similarity, and JSON output includes it as `semantic_score`.
+
+### Persistent cache
+
+SEG caches successful OpenAlex responses, individual embedding vectors, and LLM
+analyses in a local SQLite database. Caching is enabled by default at
+`data/cache/seg.sqlite3`; the directory is ignored by Git. OpenAlex entries
+expire after 24 hours. Embeddings and analyses remain reusable because their
+keys include the exact input, model, generation options, and cache schema
+version. Changing any relevant input creates a different entry.
+
+Use another location or disable caching for a run:
+
+```bash
+uv run seg paper.pdf --cache-path /tmp/seg-cache.sqlite3
+uv run seg paper.pdf --no-cache
+```
+
+Failed requests and malformed model responses are never cached. SQLite keeps
+the CLI and TUI serverless while allowing a later migration to PostgreSQL for a
+multi-user web deployment.
+
+#### LLM data flow
 
 ```text
-data/parsed/example.json          # structured Paper
-data/parsed/example.claims.json   # extracted Claims
-data/results/example.graph.json   # evidence graph
+local PDF -> title + opening text -> search terms -> OpenAlex candidate pool
+                                                     |
+                         optional local embeddings --+-> semantic reranking
+                                                               |
+                    source title + shortened text ---+
+                    candidate title + abstract ------+-> local Ollama
+                    OpenAlex topic labels -----------+       |
+                                                            v
+                                      summary + areas + relevance
 ```
+
+PDF extraction and query construction happen locally. OpenAlex receives only
+the generated search terms and objective filters. For each result, Ollama
+receives the source title, at most 6,000 characters from the source's opening
+pages, the candidate title, at most 8,000 abstract characters, and OpenAlex's
+topic labels. The model does not receive either PDF file, search the internet,
+or apply year, venue, and open-access filters. Its JSON response is validated
+with Pydantic before it is displayed. The relevant code is separated into
+`llm/client.py`, `llm/prompt.py`, `llm/schema.py`, and `llm/summarizer.py`.
 
 Run tests:
 

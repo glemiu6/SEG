@@ -1,78 +1,55 @@
+"""Small, local PDF text extractor used by the recommendation CLI."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
 
-from evidence_graph.models.document import (
-    Page,
-    TextBox,
-    TextLine,
-    TextSpan,
-)
+
+@dataclass(frozen=True)
+class ExtractedPaper:
+    path: Path
+    title: str
+    authors: str | None
+    text: str
 
 
 class PDFReader:
-
-    def __init__(self,path:str):
+    def __init__(self, path: str | Path):
         self.path = Path(path)
-
-        if not self.path.exists():
-            raise FileNotFoundError(f"File not found: {self.path}")
-
+        if not self.path.is_file():
+            raise FileNotFoundError(f"Paper not found: {self.path}")
         if self.path.suffix.lower() != ".pdf":
-            raise ValueError(f"Invalid file type: {self.path}")
+            raise ValueError(f"Expected a PDF file: {self.path}")
 
-    def extract_pages(self) -> list[Page]:
-        pages = []
-
+    def extract(self, max_pages: int | None = None) -> ExtractedPaper:
         with pymupdf.open(self.path) as document:
-            for page_number, page in enumerate(document):
-                page_data = page.get_text("dict", sort=True)
+            if document.needs_pass:
+                raise ValueError("Encrypted PDFs are not supported")
+            metadata = document.metadata or {}
+            pages = document if max_pages is None else document[:max_pages]
+            text = "\n".join(page.get_text("text", sort=True) for page in pages)
 
-                blocks = []
+        text = "\n".join(line.rstrip() for line in text.splitlines()).strip()
+        if not text:
+            raise ValueError(
+                "No selectable text was found. Scanned PDFs require OCR, which is "
+                "not included in the first MVP."
+            )
+        title = (metadata.get("title") or "").strip() or self._title_from_text(text)
+        authors = (metadata.get("author") or "").strip() or None
+        return ExtractedPaper(self.path, title, authors, text)
 
-                for block in page_data["blocks"]:
-                    if block["type"] != 0:
-                        continue
+    def extract_metadata(self) -> dict[str, str]:
+        paper = self.extract(max_pages=1)
+        return {"title": paper.title, "author": paper.authors or "Unknown"}
 
-                    lines = []
+    def extract_text(self, max_pages: int | None = None) -> str:
+        return self.extract(max_pages=max_pages).text
 
-                    for line in block["lines"]:
-                        spans = []
-
-                        for span in line["spans"]:
-                            text = span["text"].strip()
-
-                            if not text:
-                                continue
-
-                            spans.append(
-                                TextSpan(
-                                    text=text, font=span["font"], size=span["size"]
-                                )
-                            )
-
-                        if spans:
-                            lines.append(TextLine(bbox=line["bbox"],spans=spans))
-
-                    if lines:
-                        blocks.append(TextBox(bbox=block["bbox"],lines=lines))
-
-                pages.append(Page(number=page_number + 1, blocks=blocks))
-
-        return pages
-
-
-    def extract_metadata(self):
-        with pymupdf.open(self.path) as document:
-            metadata = document.metadata
-
-            return {
-                "title": metadata.get("title") or "Untitled",
-                "author": metadata.get("author") or "Unknown",
-            }
-
-
-if __name__ == "__main__":
-    reader = PDFReader("../../../data/papers/HELM.pdf")
-    print(reader.extract_metadata())
-    print(reader.extract_pages())
+    @staticmethod
+    def _title_from_text(text: str) -> str:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        return " ".join(lines[:2])[:300] if lines else "Untitled paper"
