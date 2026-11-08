@@ -4,6 +4,8 @@
 
 **Upload a research paper and discover relevant work.**
 
+![SEG — Discover relevant research](docs/assets/readme_photo.png)
+
 ![status](https://img.shields.io/badge/status-prototype-orange)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
