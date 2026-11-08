@@ -164,3 +164,42 @@ def build_search_query(title: str, text: str, max_terms: int = 14) -> str:
             counts[token] = counts.get(token, 0) + 1
     terms = sorted(counts, key=lambda word: (-counts[word], word))[:max_terms]
     return " ".join(terms) or title
+
+
+def exclude_source_and_duplicates(
+    source_title: str,
+    candidates: list[RecommendedPaper],
+    limit: int,
+) -> list[RecommendedPaper]:
+    """Remove the uploaded paper and repeated DOI/title versions, preserving rank."""
+    source_key = _normalize_title(source_title)
+    seen_dois: set[str] = set()
+    seen_titles: set[str] = set()
+    unique = []
+    for candidate in candidates:
+        title_key = _normalize_title(candidate.title)
+        doi_key = _normalize_doi(candidate.doi)
+        if title_key and title_key == source_key:
+            continue
+        if doi_key and doi_key in seen_dois:
+            continue
+        if title_key and title_key in seen_titles:
+            continue
+        if doi_key:
+            seen_dois.add(doi_key)
+        if title_key:
+            seen_titles.add(title_key)
+        unique.append(candidate)
+        if len(unique) == limit:
+            break
+    return unique
+
+
+def _normalize_title(title: str) -> str:
+    return "".join(re.findall(r"[a-z0-9]+", title.casefold()))
+
+
+def _normalize_doi(doi: str | None) -> str | None:
+    if not doi:
+        return None
+    return re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", "", doi.casefold()).strip()

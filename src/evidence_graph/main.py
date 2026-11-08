@@ -26,6 +26,7 @@ from evidence_graph.retrieval.paper_search import (
     RecommendedPaper,
     SearchFilters,
     build_search_query,
+    exclude_source_and_duplicates,
 )
 from evidence_graph.storage.cache import CacheError, SQLiteCache
 
@@ -57,6 +58,7 @@ def _format_authors(authors: tuple[str, ...]) -> str:
 
 def _print_results(
     source_title: str,
+    source_basis: str,
     query: str,
     results: list[RecommendedPaper],
     analyses: list[PaperAnalysis | None],
@@ -65,6 +67,7 @@ def _print_results(
     print("\nSEG · PAPER RECOMMENDATIONS")
     print("═" * width)
     _print_field("Source", source_title, width)
+    _print_field("Based on", source_basis, width)
     _print_field("Search", query, width)
     print(f"  {'Results':<11} {len(results)}")
 
@@ -139,23 +142,27 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("--candidate-pool must be between --limit and 100")
 
     source = PDFReader(args.paper).extract(max_pages=3)
-    query = build_search_query(source.title, source.text)
+    source_content = source.abstract or source.text
+    source_basis = "extracted abstract" if source.abstract else "opening pages (abstract not detected)"
+    query = build_search_query(source.title, source_content)
     filters = SearchFilters(args.venue, args.from_year, args.to_year, args.open_access)
     cache = None if args.no_cache else SQLiteCache(args.cache_path)
     search_limit = args.candidate_pool if args.rerank else args.limit
-    results = OpenAlexSearch(cache=cache).search(query, filters, search_limit)
+    fetch_limit = min(search_limit + 10, 100)
+    results = OpenAlexSearch(cache=cache).search(query, filters, fetch_limit)
+    results = exclude_source_and_duplicates(source.title, results, search_limit)
     if args.rerank:
         reranker = SemanticReranker(
             OllamaEmbeddingClient(args.embedding_model, args.ollama_url, cache=cache)
         )
-        results = reranker.rerank(source.title, source.text, results, args.limit)
+        results = reranker.rerank(source.title, source_content, results, args.limit)
     analyses: list[PaperAnalysis | None] = [None] * len(results)
     if args.llm:
         summarizer = PaperSummarizer(
             OllamaClient(args.model, args.ollama_url, cache=cache)
         )
         analyses = [
-            summarizer.analyze(source.title, source.text, candidate)
+            summarizer.analyze(source.title, source_content, candidate)
             for candidate in results
         ]
 
@@ -168,7 +175,7 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps({"source": source.title, "query": query, "results": output}, indent=2))
         return 0
 
-    _print_results(source.title, query, results, analyses)
+    _print_results(source.title, source_basis, query, results, analyses)
     return 0
 
 

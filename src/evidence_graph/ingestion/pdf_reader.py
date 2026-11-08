@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import pymupdf
 
@@ -13,6 +14,7 @@ class ExtractedPaper:
     path: Path
     title: str
     authors: str | None
+    abstract: str | None
     text: str
 
 
@@ -40,7 +42,7 @@ class PDFReader:
             )
         title = (metadata.get("title") or "").strip() or self._title_from_text(text)
         authors = (metadata.get("author") or "").strip() or None
-        return ExtractedPaper(self.path, title, authors, text)
+        return ExtractedPaper(self.path, title, authors, extract_abstract(text), text)
 
     def extract_metadata(self) -> dict[str, str]:
         paper = self.extract(max_pages=1)
@@ -53,3 +55,39 @@ class PDFReader:
     def _title_from_text(text: str) -> str:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         return " ".join(lines[:2])[:300] if lines else "Untitled paper"
+
+
+def extract_abstract(text: str) -> str | None:
+    """Extract an abstract section conservatively from PDF text."""
+    lines = [line.strip() for line in text.splitlines()]
+    start = None
+    abstract_lines: list[str] = []
+    abstract_heading = re.compile(
+        r"^abstract\s*(?:(?:—|–|-|:|\.)\s*)?(.*)$", re.IGNORECASE
+    )
+    next_heading = re.compile(
+        r"^(?:keywords?|index terms?)\s*(?::|—|–|-)?|"
+        r"^(?:(?:1|I)\s*[.:-]?\s*)?introduction\b",
+        re.IGNORECASE,
+    )
+
+    for index, line in enumerate(lines):
+        match = abstract_heading.match(line)
+        if match:
+            start = index + 1
+            if match.group(1).strip():
+                abstract_lines.append(match.group(1).strip())
+            break
+    if start is None:
+        return None
+
+    for line in lines[start:]:
+        if next_heading.match(line):
+            break
+        if line:
+            abstract_lines.append(line)
+
+    abstract = re.sub(r"\s+", " ", " ".join(abstract_lines)).strip()
+    if len(abstract) < 40:
+        return None
+    return abstract

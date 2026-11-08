@@ -15,9 +15,11 @@ def test_readable_output_contains_labeled_fields(capsys, monkeypatch):
         abstract="This paper presents a useful method.", areas=("Retrieval",),
         citation_count=1, score=1.0, semantic_score=0.91,
     )
-    _print_results("Source paper", "retrieval method", [paper], [None])
+    _print_results("Source paper", "extracted abstract", "retrieval method", [paper], [None])
     output = capsys.readouterr().out
     assert "SEG · PAPER RECOMMENDATIONS" in output
     assert "Authors" in output
+    assert "Based on" in output
+    assert "extracted abstract" in output
     assert "Similarity  0.910" in output
     assert "Summary" in output

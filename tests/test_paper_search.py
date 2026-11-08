@@ -1,4 +1,9 @@
-from evidence_graph.retrieval.paper_search import OpenAlexSearch, SearchFilters, build_search_query
+from evidence_graph.retrieval.paper_search import (
+    OpenAlexSearch,
+    SearchFilters,
+    build_search_query,
+    exclude_source_and_duplicates,
+)
 from evidence_graph.retrieval.paper_search import RecommendedPaper
 
 
@@ -29,3 +34,38 @@ def test_summary_is_bounded_when_abstract_has_no_sentence_spaces():
     )
     assert len(paper.summary) <= 500
     assert paper.summary.endswith("...")
+
+
+def recommendation(title: str, doi: str | None = None) -> RecommendedPaper:
+    return RecommendedPaper(
+        title=title, authors=(), year=None, venue=None, url="", doi=doi,
+        abstract="Abstract", areas=(), citation_count=0, score=1.0,
+    )
+
+
+def test_excludes_source_by_normalized_title():
+    candidates = [
+        recommendation("Graph Retrieval: Augmented Generation"),
+        recommendation("A Different Paper"),
+    ]
+    results = exclude_source_and_duplicates(
+        "Graph Retrieval — Augmented Generation", candidates, 5
+    )
+    assert [paper.title for paper in results] == ["A Different Paper"]
+
+
+def test_deduplicates_doi_and_title_while_preserving_rank():
+    candidates = [
+        recommendation("First version", "https://doi.org/10.1/example"),
+        recommendation("Published version", "doi:10.1/example"),
+        recommendation("Same Title"),
+        recommendation("same-title"),
+        recommendation("Unique"),
+    ]
+    results = exclude_source_and_duplicates("Source", candidates, 10)
+    assert [paper.title for paper in results] == ["First version", "Same Title", "Unique"]
+
+
+def test_deduplication_respects_limit():
+    candidates = [recommendation("One"), recommendation("Two"), recommendation("Three")]
+    assert len(exclude_source_and_duplicates("Source", candidates, 2)) == 2
