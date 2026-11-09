@@ -11,10 +11,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 from evidence_graph.config import PROJECT_ROOT
+from evidence_graph.graph.exporter import export_json
 from evidence_graph.ingestion.pdf_reader import PDFReader
 from evidence_graph.llm.client import LLMError, OllamaClient
 from evidence_graph.llm.schema import PaperAnalysis
 from evidence_graph.llm.summarizer import PaperSummarizer
+from evidence_graph.pipeline.evidence_pipeline import build_from_pdf
 from evidence_graph.retrieval.embeddings import (
     EmbeddingError,
     OllamaEmbeddingClient,
@@ -130,6 +132,22 @@ def parser() -> argparse.ArgumentParser:
         help="SQLite cache location (default: data/cache/seg.sqlite3)",
     )
     command.add_argument("--no-cache", action="store_true", help="disable persistent caching")
+    command.add_argument(
+        "--evidence-corpus", type=Path,
+        help="directory of text-based PDFs to search for claim-level evidence",
+    )
+    command.add_argument(
+        "--evidence-output", type=Path,
+        help="write the claim/evidence graph JSON to this path (requires --evidence-corpus)",
+    )
+    command.add_argument(
+        "--max-claims", type=int, default=10,
+        help="maximum source claims to extract in evidence mode (default: 10)",
+    )
+    command.add_argument(
+        "--passages-per-claim", type=int, default=5,
+        help="retrieved corpus passages to assess for each claim (default: 5)",
+    )
     return command
 
 
@@ -140,6 +158,31 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("--from-year cannot be later than --to-year")
     if args.rerank and (args.candidate_pool < args.limit or args.candidate_pool > 100):
         raise ValueError("--candidate-pool must be between --limit and 100")
+    if args.max_claims < 1 or args.max_claims > 20:
+        raise ValueError("--max-claims must be between 1 and 20")
+    if args.passages_per_claim < 1 or args.passages_per_claim > 20:
+        raise ValueError("--passages-per-claim must be between 1 and 20")
+    if args.evidence_output and not args.evidence_corpus:
+        raise ValueError("--evidence-output requires --evidence-corpus")
+
+    if args.evidence_corpus:
+        cache = None if args.no_cache else SQLiteCache(args.cache_path)
+        graph = build_from_pdf(
+            args.paper,
+            args.evidence_corpus,
+            OllamaClient(args.model, args.ollama_url, cache=cache),
+            args.max_claims,
+            args.passages_per_claim,
+        )
+        if args.evidence_output:
+            export_json(graph, args.evidence_output)
+        if args.json:
+            print(graph.model_dump_json(indent=2))
+        else:
+            print(f"Extracted {len(graph.claims)} claims and found {len(graph.relations)} evidence relations.")
+            if args.evidence_output:
+                print(f"Evidence graph written to {args.evidence_output}")
+        return 0
 
     source = PDFReader(args.paper).extract(max_pages=3)
     source_content = source.abstract or source.text

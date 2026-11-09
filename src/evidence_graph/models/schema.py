@@ -75,3 +75,22 @@ class Paper(BaseModel):
     sections: list[Section] = Field(default_factory=list)
     parse_source: str                # which parser produced this
     schema_version: str = SCHEMA_VERSION
+
+
+class Claim(BaseModel):
+    """A check-worthy, standalone assertion grounded in one source passage."""
+
+    id: str
+    paper_id: str
+    text: str = Field(min_length=1)
+    source_span: Span
+    conditions: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class Stance(str, Enum):
+    SUPPORTS = "supports"
+    CONTRADICTS = "contradicts"
+    QUALIFIES = "qualifies"
+    NEUTRAL = "neutral"
+    NOT_RELEVANT = "not_relevant"

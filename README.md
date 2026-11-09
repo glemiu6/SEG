@@ -1,6 +1,6 @@
 <div align="center">
 
-# SEG
+# Scientific Evidence Graph
 
 **Upload a research paper and discover relevant work.**
 
@@ -29,6 +29,7 @@ relevant.
 - Generate structured summaries, areas, and relevance explanations locally.
 - Cache searches, embeddings, and analyses in SQLite.
 - Print readable terminal results or machine-readable JSON.
+- Build a local, quote-backed claim-evidence graph from a PDF and a local PDF corpus.
 
 > [!NOTE]
 > SEG is a research prototype. Image-only PDFs require OCR and are not yet
@@ -90,6 +91,19 @@ PDF files are never sent to OpenAlex or Ollama. Ollama is local by default at
 
 ## Common workflows
 
+Extract claims from a source paper, search a local corpus for evidence passages,
+and classify only quote-backed supporting, contradicting, or qualifying relations:
+
+```bash
+uv run seg paper.pdf --evidence-corpus data/corpus --evidence-output data/results/graph.json
+```
+
+This evidence mode uses Ollama, so ensure a generation model is available (the
+default is `qwen3:8b`). The corpus directory must contain text-based PDFs. Its
+JSON output records each source claim, the exact supporting source quote, every
+retrieved evidence quote, stance, rationale, and confidence. It is an initial
+lexical-retrieval baseline; model labels are research aids and require review.
+
 Filter by publication information:
 
 ```bash
@@ -145,6 +159,10 @@ uv run seg PAPER [OPTIONS]
 | `--ollama-url URL` | `http://localhost:11434` | Ollama server used for both model types |
 | `--cache-path PATH` | `data/cache/seg.sqlite3` | SQLite cache location |
 | `--no-cache` | off | Disable persistent cache reads and writes |
+| `--evidence-corpus DIR` | — | Search PDFs in `DIR` for claim-level evidence |
+| `--evidence-output PATH` | — | Write evidence-graph JSON; requires `--evidence-corpus` |
+| `--max-claims N` | `10` | Maximum claims to extract in evidence mode, 1–20 |
+| `--passages-per-claim N` | `5` | Candidate evidence passages assessed per claim, 1–20 |
 
 Run `uv run seg --help` for the options installed with your version.
 
@@ -207,9 +225,9 @@ src/evidence_graph/
 ├── llm/          # Ollama client, prompts, schemas, summarization
 ├── storage/      # SQLite and JSON persistence
 ├── models/       # shared Pydantic schemas
-├── extraction/   # planned claim extraction
-├── relations/    # planned evidence classification
-├── graph/        # planned evidence graph output
+├── extraction/   # quote-backed claim extraction
+├── relations/    # evidence stance classification
+├── graph/        # portable evidence graph output
 └── main.py       # CLI entry point
 tests/            # pytest suite
 ```
